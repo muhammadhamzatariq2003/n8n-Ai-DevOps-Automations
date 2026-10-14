@@ -1,0 +1,180 @@
+{
+  "name": "GitHub CI Failure Alerts",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "github-ci-alerts",
+        "options": {}
+      },
+      "id": "628e8aa9-b80f-4000-8000-61615c4cef7b",
+      "name": "GitHub Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "a5e93eb2-74f5-4000-8000-2a25ed365892"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "84a93f2a-fe31-4000-8000-2be9e2efb228",
+              "name": "slackChannel",
+              "value": "engineering-alerts",
+              "type": "string"
+            },
+            {
+              "id": "3bca72bf-6415-4000-8000-ca3800070f7c",
+              "name": "allowedRepos",
+              "value": "",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "f32fc882-5b20-4000-8000-70bfa26480ce",
+      "name": "Settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        480,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const j = $input.item.json;\nconst body = j.body || {};\nconst event = (j.headers || {})['x-github-event'];\nconst esc = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n\nconst run = body.workflow_run;\nconst repo = body.repository && body.repository.full_name;\nconst allowed = String(j.allowedRepos || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);\n\nconst failed = run && ['failure', 'timed_out'].includes(run.conclusion);\nif (event !== 'workflow_run' || body.action !== 'completed' || !failed || !repo\n    || (allowed.length && !allowed.includes(repo.toLowerCase()))) {\n  return { json: { send: false } };\n}\n\nconst commit = run.head_commit || {};\nconst firstLine = String(commit.message || '').split('\\n')[0];\nconst actor = (run.triggering_actor && run.triggering_actor.login) || (run.actor && run.actor.login) || 'unknown';\n\nconst text = [\n  run.conclusion === 'timed_out' ? '🟠 *CI timed out*' : '🔴 *CI failure*',\n  `*Workflow:* ${esc(run.name)}`,\n  `*Repo:* ${esc(repo)}   *Branch:* \\`${esc(run.head_branch)}\\``,\n  `*Commit:* \\`${String(run.head_sha || '').slice(0, 7)}\\` — ${esc(firstLine)}`,\n  `*Triggered by:* ${esc(actor)}${run.run_attempt > 1 ? ` (attempt ${run.run_attempt})` : ''}`,\n  `<${run.html_url}|View run>`,\n].join('\\n');\n\nreturn { json: { send: true, channel: j.slackChannel || 'engineering-alerts', text } };",
+        "mode": "runOnceForEachItem"
+      },
+      "id": "3f82ad29-b436-4000-8000-4cba4fe1d1e8",
+      "name": "Prepare Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "591ebbe0-4d88-4000-8000-db16c56f2022",
+              "leftValue": "={{ $json.send === true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "d68372ae-b880-4000-8000-4487eb950f32",
+      "name": "Send Alert?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        960,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://slack.com/api/chat.postMessage",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $json.channel, text: $json.text, unfurl_links: false }) }}",
+        "options": {}
+      },
+      "id": "3d475c22-4db7-4000-8000-675128396d63",
+      "name": "Post to Slack",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1200,
+        300
+      ],
+      "credentials": {
+        "slackApi": {
+          "id": "3",
+          "name": "Slack Account"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    }
+  ],
+  "connections": {
+    "GitHub Webhook": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "Prepare Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Alert": {
+      "main": [
+        [
+          {
+            "node": "Send Alert?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Alert?": {
+      "main": [
+        [
+          {
+            "node": "Post to Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}

@@ -1,0 +1,205 @@
+{
+  "name": "Uptime Monitor with Slack Alerts",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      },
+      "id": "32c3d1e6-e49a-4000-8000-eafe9622c97c",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "27be700d-2cb2-4000-8000-2fe9f8182aa3",
+              "name": "slackChannel",
+              "value": "engineering-alerts",
+              "type": "string"
+            },
+            {
+              "id": "b4d47245-5973-4000-8000-85b07044fecd",
+              "name": "failuresBeforeAlert",
+              "value": 2,
+              "type": "number"
+            },
+            {
+              "id": "fa04dc1f-c00d-4000-8000-5aaf0ef7e3d7",
+              "name": "repeatAlertEvery",
+              "value": 12,
+              "type": "number"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "4962cdfd-8847-4000-8000-32dbab41cb32",
+      "name": "Settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        480,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Edit this list: one entry per service you want to watch.\n// expectedStatus is optional (default 200).\nconst targets = [\n  { name: 'Main API', url: 'https://api.example.com/health', expectedStatus: 200 },\n  { name: 'Website', url: 'https://www.example.com', expectedStatus: 200 },\n];\n\nreturn targets.map((t) => ({ json: { expectedStatus: 200, ...t } }));"
+      },
+      "id": "2155eab6-5504-4000-8000-9476938c6c07",
+      "name": "Define Targets",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "options": {
+          "timeout": 10000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "id": "8a90da04-a45e-4000-8000-63df071c9c76",
+      "name": "Check Each URL",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        960,
+        300
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const settings = $('Settings').first().json;\nconst threshold = Math.max(1, Number(settings.failuresBeforeAlert) || 2);\nconst repeatEvery = Math.max(1, Number(settings.repeatAlertEvery) || 12);\nconst channel = settings.slackChannel || 'engineering-alerts';\n\n// Remembers failures between runs (kept while the workflow is active).\nconst memory = $getWorkflowStaticData('global');\nmemory.failures = memory.failures || {};\n\nconst targets = $('Define Targets').all();\nconst out = [];\n\n$input.all().forEach((res, i) => {\n  const idx = res.pairedItem && res.pairedItem.item !== undefined ? res.pairedItem.item : i;\n  const target = (targets[idx] || targets[i]).json;\n  const r = res.json || {};\n\n  const status = r.statusCode !== undefined ? Number(r.statusCode) : null;\n  const expected = Number(target.expectedStatus) || 200;\n  const down = status === null || status !== expected;\n  const reason = status === null\n    ? (r.error && (r.error.message || String(r.error))) || 'No response (timeout or connection error)'\n    : `HTTP ${status} (expected ${expected})`;\n\n  const key = target.url;\n  const before = memory.failures[key] || 0;\n  let text = null;\n\n  if (down) {\n    const failures = before + 1;\n    memory.failures[key] = failures;\n    if (failures === threshold) {\n      text = `🚨 *Server health alert*\\n*Service:* ${target.name}\\n*URL:* ${target.url}\\n*Problem:* ${reason}`;\n    } else if (failures > threshold && (failures - threshold) % repeatEvery === 0) {\n      text = `🚨 *Still down* (${failures} checks in a row)\\n*Service:* ${target.name}\\n*URL:* ${target.url}\\n*Problem:* ${reason}`;\n    }\n  } else {\n    memory.failures[key] = 0;\n    if (before >= threshold) {\n      text = `✅ *Recovered*\\n*Service:* ${target.name}\\n*URL:* ${target.url}\\nIt was failing for ${before} checks.`;\n    }\n  }\n\n  if (text) out.push({ json: { channel, text: `${text}\\n_${new Date().toUTCString()}_` } });\n});\n\nreturn out;"
+      },
+      "id": "a6353383-34e0-4000-8000-4c401a2110d2",
+      "name": "Detect Changes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://slack.com/api/chat.postMessage",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $json.channel, text: $json.text, unfurl_links: false }) }}",
+        "options": {}
+      },
+      "id": "af4b1436-240e-4000-8000-58ff8b903417",
+      "name": "Post to Slack",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1440,
+        300
+      ],
+      "credentials": {
+        "slackApi": {
+          "id": "3",
+          "name": "Slack Account"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "Define Targets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Define Targets": {
+      "main": [
+        [
+          {
+            "node": "Check Each URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Each URL": {
+      "main": [
+        [
+          {
+            "node": "Detect Changes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Detect Changes": {
+      "main": [
+        [
+          {
+            "node": "Post to Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}

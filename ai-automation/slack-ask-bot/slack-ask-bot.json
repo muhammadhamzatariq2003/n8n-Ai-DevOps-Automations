@@ -1,0 +1,303 @@
+{
+  "name": "AI Slack Ask Bot",
+  "nodes": [
+    {
+      "parameters": {
+        "trigger": [
+          "app_mention"
+        ],
+        "watchWorkspace": false,
+        "options": {}
+      },
+      "id": "189608ed-2af6-4000-8000-7519a82ff12d",
+      "name": "Slack Trigger",
+      "type": "n8n-nodes-base.slackTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        300
+      ],
+      "credentials": {
+        "slackApi": {
+          "id": "3",
+          "name": "Slack Account"
+        }
+      },
+      "webhookId": "589849e3-b5f8-4000-8000-c839564e50e6"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "2c34518c-89e6-4000-8000-bee1bd068ef6",
+              "name": "openaiModel",
+              "value": "gpt-4o-mini",
+              "type": "string"
+            },
+            {
+              "id": "fb348a6c-6a2e-4000-8000-8a9e759ac55d",
+              "name": "systemPrompt",
+              "value": "You are a helpful assistant inside Slack. Keep answers short and clear. Use Slack formatting (*bold*, _italic_, `code`) and never Markdown headings or tables.",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "54b75976-d263-4000-8000-1374cf0db9a0",
+      "name": "Settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        480,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const e = $input.item.json;\n\nconst isBot = Boolean(e.bot_id) || e.subtype === 'bot_message';\nconst text = String(e.text || '')\n  .replace(/<@[A-Z0-9]+(\\|[^>]*)?>/g, '')\n  .replace(/\\s+/g, ' ')\n  .trim();\n\nreturn { json: {\n  action: isBot ? 'ignore' : (text ? 'ask' : 'help'),\n  channel: e.channel,\n  threadTs: e.thread_ts || e.ts,\n  question: text,\n  openaiRequest: {\n    model: e.openaiModel || 'gpt-4o-mini',\n    messages: [\n      { role: 'system', content: e.systemPrompt || 'You are a helpful assistant inside Slack. Keep answers short.' },\n      { role: 'user', content: text.slice(0, 4000) },\n    ],\n  },\n} };",
+        "mode": "runOnceForEachItem"
+      },
+      "id": "e70d580e-afd6-4000-8000-2b6d931288c2",
+      "name": "Prepare Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "4b8029be-8271-4000-8000-c760b8ed035c",
+              "leftValue": "={{ $json.action !== 'ignore' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "590e2275-9cd7-4000-8000-1e138afa177f",
+      "name": "Should Reply?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        960,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "fee3571f-eb6b-4000-8000-1ce467dd322b",
+              "leftValue": "={{ $json.action === 'ask' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "42ba8f24-e755-4000-8000-81cc3d370b2a",
+      "name": "Needs AI?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.openaiRequest) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "c848a143-8520-4000-8000-d9ce3425b33a",
+      "name": "Ask OpenAI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1440,
+        300
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "2",
+          "name": "OpenAI Account"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "jsCode": "const prep = $('Prepare Prompt').item.json;\nlet text;\n\nif (prep.action === 'help') {\n  text = 'Hi! Mention me with a question, for example: `@me what is the difference between TCP and UDP?`';\n} else {\n  const message = ((($input.item.json || {}).choices || [])[0] || {}).message || {};\n  text = (message.content && message.content.trim()) || \"Sorry, I couldn't come up with an answer. Please try again.\";\n}\n\nreturn { json: { channel: prep.channel, thread_ts: prep.threadTs, text: text.slice(0, 3900) } };",
+        "mode": "runOnceForEachItem"
+      },
+      "id": "c8af6fe1-4360-4000-8000-db6dd683cc10",
+      "name": "Build Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://slack.com/api/chat.postMessage",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $json.channel, thread_ts: $json.thread_ts, text: $json.text }) }}",
+        "options": {}
+      },
+      "id": "f26e57ea-59c2-4000-8000-3de9949db005",
+      "name": "Reply in Thread",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1920,
+        300
+      ],
+      "credentials": {
+        "slackApi": {
+          "id": "3",
+          "name": "Slack Account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Slack Trigger": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "Prepare Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Prompt": {
+      "main": [
+        [
+          {
+            "node": "Should Reply?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should Reply?": {
+      "main": [
+        [
+          {
+            "node": "Needs AI?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs AI?": {
+      "main": [
+        [
+          {
+            "node": "Ask OpenAI",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ask OpenAI": {
+      "main": [
+        [
+          {
+            "node": "Build Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Reply": {
+      "main": [
+        [
+          {
+            "node": "Reply in Thread",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}

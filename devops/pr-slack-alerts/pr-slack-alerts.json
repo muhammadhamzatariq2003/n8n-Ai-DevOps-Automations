@@ -1,0 +1,180 @@
+{
+  "name": "GitHub PR Slack Alerts",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "github-pr-alerts",
+        "options": {}
+      },
+      "id": "bbcdc762-1299-4000-8000-b3c2fed64a08",
+      "name": "GitHub Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "b122c576-b1e1-4000-8000-ef10401ff85f"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "9b7228c5-a748-4000-8000-d05a4dc3d650",
+              "name": "slackChannel",
+              "value": "engineering",
+              "type": "string"
+            },
+            {
+              "id": "da8490be-ab38-4000-8000-9907d0130490",
+              "name": "allowedRepos",
+              "value": "",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "f4b06489-eafa-4000-8000-c3d6516617db",
+      "name": "Settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        480,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const j = $input.item.json;\nconst body = j.body || {};\nconst event = (j.headers || {})['x-github-event'];\nconst esc = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n\nconst allowed = String(j.allowedRepos || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);\nconst repo = body.repository && body.repository.full_name;\nif (event !== 'pull_request' || !body.pull_request || !repo\n    || (allowed.length && !allowed.includes(repo.toLowerCase()))) {\n  return { json: { send: false } };\n}\n\nconst pr = body.pull_request;\nconst title = `*<${pr.html_url}|${esc(pr.title)}>*`;\nlet text = null;\n\nif (body.action === 'opened' || body.action === 'ready_for_review') {\n  text = [\n    pr.draft ? '↗ *New draft PR*' : '↗ *New PR opened*',\n    title,\n    `By ${esc(pr.user && pr.user.login)} in ${esc(repo)}`,\n    `+${pr.additions} / -${pr.deletions} lines in ${pr.changed_files} file${pr.changed_files === 1 ? '' : 's'}`,\n  ].join('\\n');\n} else if (body.action === 'closed' && pr.merged === true) {\n  text = [\n    '🔀 *PR merged*',\n    title,\n    `Merged by ${esc((pr.merged_by && pr.merged_by.login) || (body.sender && body.sender.login))} into \\`${esc(pr.base && pr.base.ref)}\\``,\n    `Repo: ${esc(repo)}`,\n  ].join('\\n');\n}\n\nreturn { json: { send: text !== null, channel: j.slackChannel || 'engineering', text } };",
+        "mode": "runOnceForEachItem"
+      },
+      "id": "0a77cb15-c597-4000-8000-130c80ae43f2",
+      "name": "Prepare Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "94c302f0-88cf-4000-8000-984df7ea8175",
+              "leftValue": "={{ $json.send === true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "6b9d12b3-e5c0-4000-8000-6a5ef9a2c43a",
+      "name": "Send Alert?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        960,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://slack.com/api/chat.postMessage",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $json.channel, text: $json.text, unfurl_links: false }) }}",
+        "options": {}
+      },
+      "id": "1f492d26-a11c-4000-8000-742b15cc1e5e",
+      "name": "Post to Slack",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1200,
+        300
+      ],
+      "credentials": {
+        "slackApi": {
+          "id": "3",
+          "name": "Slack Account"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    }
+  ],
+  "connections": {
+    "GitHub Webhook": {
+      "main": [
+        [
+          {
+            "node": "Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Settings": {
+      "main": [
+        [
+          {
+            "node": "Prepare Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Message": {
+      "main": [
+        [
+          {
+            "node": "Send Alert?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Alert?": {
+      "main": [
+        [
+          {
+            "node": "Post to Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}
